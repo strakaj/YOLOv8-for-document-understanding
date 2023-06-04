@@ -70,7 +70,7 @@ class YOLO:
         list(ultralytics.yolo.engine.results.Results): The prediction results.
     """
 
-    def __init__(self, model: Union[str, Path] = 'yolov8n.pt', task=None) -> None:
+    def __init__(self, model: Union[str, Path] = 'yolov8n.pt', task=None, ch=None) -> None:
         """
         Initializes the YOLO model.
 
@@ -89,6 +89,7 @@ class YOLO:
         self.overrides = {}  # overrides for trainer object
         self.metrics = None  # validation/training metrics
         self.session = None  # HUB session
+        self.ch = ch
         model = str(model).strip()  # strip spaces
 
         # Check if Ultralytics HUB model from https://hub.ultralytics.com
@@ -133,6 +134,8 @@ class YOLO:
             verbose (bool): display model info on load
         """
         cfg_dict = yaml_model_load(cfg)
+        if not self.ch is None:
+            cfg_dict["ch"] = self.ch
         self.cfg = cfg
         self.task = task or guess_model_task(cfg_dict)
         self.model = TASK_MAP[self.task][0](cfg_dict, verbose=verbose and RANK == -1)  # build model

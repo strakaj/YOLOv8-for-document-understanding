@@ -24,7 +24,7 @@ from ultralytics.yolo.utils.downloads import download, safe_download, unzip_file
 from ultralytics.yolo.utils.ops import segments2boxes
 
 HELP_URL = 'See https://github.com/ultralytics/yolov5/wiki/Train-Custom-Data'
-IMG_FORMATS = 'bmp', 'dng', 'jpeg', 'jpg', 'mpo', 'png', 'tif', 'tiff', 'webp', 'pfm'  # image suffixes
+IMG_FORMATS = 'bmp', 'dng', 'jpeg', 'jpg', 'mpo', 'png', 'tif', 'tiff', 'webp', 'pfm', "ppm"  # image suffixes
 VID_FORMATS = 'asf', 'avi', 'gif', 'm4v', 'mkv', 'mov', 'mp4', 'mpeg', 'mpg', 'ts', 'wmv', 'webm'  # video suffixes
 PIN_MEMORY = str(os.getenv('PIN_MEMORY', True)).lower() == 'true'  # global pin_memory for dataloaders
 IMAGENET_MEAN = 0.485, 0.456, 0.406  # RGB mean
@@ -47,6 +47,14 @@ def get_hash(paths):
     size = sum(os.path.getsize(p) for p in paths if os.path.exists(p))  # sizes
     h = hashlib.sha256(str(size).encode())  # hash sizes
     h.update(''.join(paths).encode())  # hash paths
+    return h.hexdigest()  # return hash
+
+
+def get_hash_docile(paths):
+    """Returns a single hash value of a list of paths (files or dirs)."""
+    size = "".join((f"{p['split']}{p['doc_i']}{p['page']}" for p in paths))  # sizes
+    h = hashlib.sha256(str(size).encode())  # hash sizes
+    h.update(''.join((f"{p['split']}{p['doc_i']}{p['page']}" for p in paths)).encode())  # hash paths
     return h.hexdigest()  # return hash
 
 
@@ -126,6 +134,114 @@ def verify_image_label(args):
                 kpt_mask = np.where(keypoints[..., 0] < 0, 0.0, kpt_mask)
                 kpt_mask = np.where(keypoints[..., 1] < 0, 0.0, kpt_mask)
                 keypoints = np.concatenate([keypoints, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
+        lb = lb[:, :5]
+        return im_file, lb, shape, segments, keypoints, nm, nf, ne, nc, msg
+    except Exception as e:
+        nc = 1
+        msg = f'{prefix}WARNING ⚠️ {im_file}: ignoring corrupt image/label: {e}'
+        return [None, None, None, None, None, nm, nf, ne, nc, msg]
+
+
+def get_line_item_boxes(fields):
+    id_to_box = {}
+    for field in fields:
+        if field.line_item_id in id_to_box:
+            id_to_box[field.line_item_id].append(field.bbox.to_tuple())
+        else:
+            id_to_box[field.line_item_id] = [field.bbox.to_tuple()]
+
+    id_to_merged = {}
+    for liid in id_to_box:
+        x = []
+        y = []
+        for b in id_to_box[liid]:
+            x0, y0, x1, y1 = b
+            x.extend([x0, x1])
+            y.extend([y0, y1])
+        id_to_merged[liid] = [np.min(x), np.min(y), np.max(x), np.max(y)]
+
+    return id_to_merged
+
+
+def verify_image_label_docile(args):
+    """Verify one image-label pair."""
+    im_file, datasets, prefix, label_to_id, num_cls, nkpt, ndim = args
+    # Number (missing, found, empty, corrupt), message, segments, keypoints
+    nm, nf, ne, nc, msg, segments, keypoints = 0, 0, 0, 0, '', [], None
+    try:
+        # Verify images
+        document = datasets[im_file["split"]][im_file["doc_i"]]
+        image_size = document.page_image_size(page=im_file["page"], dpi=72)
+        im = document.page_image(page=im_file["page"], image_size=image_size)
+        im.verify()  # PIL verify
+        shape = exif_size(im)  # image size
+        shape = (shape[1], shape[0])  # hw
+        assert (shape[0] > 9) & (shape[1] > 9), f'image size {shape} <10 pixels'
+        assert im.format.lower() in IMG_FORMATS, f'invalid image format {im.format}'
+        if im.format.lower() in ('jpg', 'jpeg'):
+            with open(im_file, 'rb') as f:
+                f.seek(-2, 2)
+                if f.read() != b'\xff\xd9':  # corrupt JPEG
+                    ImageOps.exif_transpose(Image.open(im_file)).save(im_file, 'JPEG', subsampling=0, quality=100)
+                    msg = f'{prefix}WARNING ⚠️ {im_file}: corrupt JPEG restored and saved'
+
+        # Verify labels
+        nf = 1  # label found
+        lb = []
+
+        fields = []
+        fields.extend([f for f in document.annotation.fields if f.page == im_file["page"]])
+        fields.extend([f for f in document.annotation.li_headers if f.page == im_file["page"]])
+        fields.extend([f for f in document.annotation.li_fields if f.page == im_file["page"]])
+
+        for field in fields:
+            cls = label_to_id[field.fieldtype]
+            x0, y0, x1, y1 = field.bbox.to_tuple()
+            w = x1 - x0
+            h = y1 - y0
+            x = x0 + w / 2
+            y = y0 + h / 2
+            lb.append([cls, x, y, w, h])
+
+        # create line item boxes
+        if "line_item" in label_to_id:
+            fields = []
+            fields.extend([f for f in document.annotation.li_headers if f.page == im_file["page"]])
+            fields.extend([f for f in document.annotation.li_fields if f.page == im_file["page"]])
+            li_boxes = get_line_item_boxes(fields)
+            for _, box in li_boxes.items():
+                cls = label_to_id["line_item"]
+                x0, y0, x1, y1 = box
+                w = x1 - x0
+                h = y1 - y0
+                x = x0 + w / 2
+                y = y0 + h / 2
+                lb.append([cls, x, y, w, h])
+
+        # lb = [[cls x y w h] [...] ... ]
+        lb = np.array(lb, dtype=np.float32)
+
+        nl = len(lb)
+        if nl:
+            assert lb.shape[1] == 5, f'labels require 5 columns, {lb.shape[1]} columns detected'
+            assert (lb[:, 1:] <= 1).all(), \
+                f'non-normalized or out of bounds coordinates {lb[:, 1:][lb[:, 1:] > 1]}'
+            assert (lb >= 0).all(), f'negative label values {lb[lb < 0]}'
+            # All labels
+            max_cls = int(lb[:, 0].max())  # max label count
+            assert max_cls <= num_cls, \
+                f'Label class {max_cls} exceeds dataset class count {num_cls}. ' \
+                f'Possible class labels are 0-{num_cls - 1}'
+            _, i = np.unique(lb, axis=0, return_index=True)
+            if len(i) < nl:  # duplicate row check
+                lb = lb[i]  # remove duplicates
+                if segments:
+                    segments = [segments[x] for x in i]
+                msg = f'{prefix}WARNING ⚠️ {im_file}: {nl - len(i)} duplicate labels removed'
+        else:
+            ne = 1  # label empty
+            lb = np.zeros((0, 5), dtype=np.float32)
+
         lb = lb[:, :5]
         return im_file, lb, shape, segments, keypoints, nm, nf, ne, nc, msg
     except Exception as e:
@@ -238,6 +354,7 @@ def check_det_dataset(dataset, autodownload=True):
                 data[k] = [str((path / x).resolve()) for x in data[k]]
 
     # Parse yaml
+    """
     train, val, test, s = (data.get(x) for x in ('train', 'val', 'test', 'download'))
     if val:
         val = [Path(x).resolve() for x in (val if isinstance(val, list) else [val])]  # val path
@@ -261,6 +378,7 @@ def check_det_dataset(dataset, autodownload=True):
             dt = f'({round(time.time() - t, 1)}s)'
             s = f"success ✅ {dt}, saved to {colorstr('bold', DATASETS_DIR)}" if r in (0, None) else f'failure {dt} ❌'
             LOGGER.info(f'Dataset download {s}\n')
+    """
     check_font('Arial.ttf' if is_ascii(data['names']) else 'Arial.Unicode.ttf')  # download fonts
 
     return data  # dictionary

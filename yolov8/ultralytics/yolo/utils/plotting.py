@@ -318,7 +318,7 @@ def plot_images(images,
             break
         x, y = int(w * (i // ns)), int(h * (i % ns))  # block origin
         im = im.transpose(1, 2, 0)
-        mosaic[y:y + h, x:x + w, :] = im
+        mosaic[y:y + h, x:x + w, :3] = im[..., :3]
 
     # Resize (optional)
     scale = max_size / ns / max(h, w)
@@ -334,7 +334,12 @@ def plot_images(images,
         x, y = int(w * (i // ns)), int(h * (i % ns))  # block origin
         annotator.rectangle([x, y, x + w, y + h], None, (255, 255, 255), width=2)  # borders
         if paths:
-            annotator.text((x + 5, y + 5), text=Path(paths[i]).name[:40], txt_color=(220, 220, 220))  # filenames
+            text = ""
+            if isinstance(paths[i], dict):
+                text = f"{paths[i]['split']}  doc {paths[i]['doc_i']}  {paths[i]['page']}"
+            else:
+                text = Path(paths[i]).name[:40]
+            annotator.text((x + 5, y + 5), text=text, txt_color=(220, 220, 220))  # filenames
         if len(cls) > 0:
             idx = batch_idx == i
 

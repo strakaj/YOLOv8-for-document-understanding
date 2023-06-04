@@ -514,8 +514,17 @@ class LetterBox:
             img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
         top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
         left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
-        img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT,
-                                 value=(114, 114, 114))  # add border
+        
+        ch = img.shape[2]
+        if ch==6:
+            img1 = cv2.copyMakeBorder(img[:, :, :3], top, bottom, left, right, cv2.BORDER_CONSTANT,
+                                     value=(114, 114, 114))  # add border
+            img2 = cv2.copyMakeBorder(img[:, :, 3:], top, bottom, left, right, cv2.BORDER_CONSTANT,
+                                     value=(114, 114, 114))  # add border
+            img = np.concatenate((img1, img2), axis=2)
+        else:
+            img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT,
+                                    value=(114, 114, 114))  # add border
 
         if len(labels):
             labels = self._update_labels(labels, ratio, dw, dh)
@@ -619,6 +628,51 @@ class Albumentations:
                     bboxes = np.array(new['bboxes'])
             labels['instances'].update(bboxes=bboxes)
         return labels
+    
+
+class AlbumentationsChargrid:
+    # YOLOv8 Albumentations class (optional, only used if package is installed)
+    def __init__(self, p=1.0):
+        """Initialize the transform object for YOLO bbox formatted params."""
+        self.p = p
+        self.transform = None
+        prefix = colorstr('albumentations: ')
+        try:
+            import albumentations as A
+
+            check_version(A.__version__, '1.0.3', hard=True)  # version requirement
+
+            T = [
+                A.Blur(p=0.01),
+                A.MedianBlur(p=0.01),
+                A.RandomBrightnessContrast(p=0.0),
+                A.RandomGamma(p=0.0),
+                A.ImageCompression(quality_lower=75, p=0.0)]  # transforms
+            self.transform = A.Compose(T, bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
+
+            LOGGER.info(prefix + ', '.join(f'{x}'.replace('always_apply=False, ', '') for x in T if x.p))
+        except ImportError:  # package not installed, skip
+            pass
+        except Exception as e:
+            LOGGER.info(f'{prefix}{e}')
+
+    def __call__(self, labels):
+        """Generates object detections and returns a dictionary with detection results."""
+        im = labels['img']
+        cls = labels['cls']
+        if len(cls):
+            labels['instances'].convert_bbox('xywh')
+            labels['instances'].normalize(*im.shape[:2][::-1])
+            bboxes = labels['instances'].bboxes
+            # TODO: add supports of segments and keypoints
+            if self.transform and random.random() < self.p:
+                new = self.transform(image=im, bboxes=bboxes, class_labels=cls)  # transformed
+                if len(new['class_labels']) > 0:  # skip update if no bbox in new im
+                    labels['img'] = new['image']
+                    labels['cls'] = np.array(new['class_labels'])
+                    bboxes = np.array(new['bboxes'])
+            labels['instances'].update(bboxes=bboxes)
+        return labels
 
 
 # TODO: technically this is not an augmentation, maybe we should put this to another files
@@ -692,7 +746,7 @@ class Format:
         return masks, instances, cls
 
 
-def v8_transforms(dataset, imgsz, hyp):
+def v8_transforms(dataset, imgsz, hyp, chargrid=False):
     """Convert images to a size suitable for YOLOv8 training."""
     pre_transform = Compose([
         Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic, border=[-imgsz // 2, -imgsz // 2]),
@@ -709,6 +763,14 @@ def v8_transforms(dataset, imgsz, hyp):
     if dataset.use_keypoints and flip_idx is None and hyp.fliplr > 0.0:
         hyp.fliplr = 0.0
         LOGGER.warning("WARNING ⚠️ No `flip_idx` provided while training keypoints, setting augmentation 'fliplr=0.0'")
+    if chargrid:
+        return Compose([
+            pre_transform,
+            MixUp(dataset, pre_transform=pre_transform, p=hyp.mixup),
+            AlbumentationsChargrid(p=1.0),
+            RandomFlip(direction='vertical', p=hyp.flipud),
+            RandomFlip(direction='horizontal', p=hyp.fliplr, flip_idx=flip_idx)])  # transforms
+
     return Compose([
         pre_transform,
         MixUp(dataset, pre_transform=pre_transform, p=hyp.mixup),

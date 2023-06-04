@@ -16,7 +16,7 @@ from ultralytics.yolo.utils.checks import check_file
 
 from ..utils import LOGGER, RANK, colorstr
 from ..utils.torch_utils import torch_distributed_zero_first
-from .dataset import ClassificationDataset, YOLODataset
+from .dataset import ClassificationDataset, YOLODataset, DOCILEDataset
 from .utils import PIN_MEMORY
 
 
@@ -62,6 +62,61 @@ def seed_worker(worker_id):  # noqa
     worker_seed = torch.initial_seed() % 2 ** 32
     np.random.seed(worker_seed)
     random.seed(worker_seed)
+
+
+def build_dataloader_docile(cfg, batch, img_path, data_info, stride=32, rect=False, rank=-1, mode='train'):
+    """Return an InfiniteDataLoader or DataLoader for training or validation set."""
+    assert mode in ['train', 'val']
+    shuffle = mode == 'train'
+    if cfg.rect and shuffle:
+        LOGGER.warning("WARNING ⚠️ 'rect=True' is incompatible with DataLoader shuffle, setting shuffle=False")
+        shuffle = False
+
+    # in yolov8 img_path corresponds to folder with images
+    # we are using docile dataset implementation,
+    # therefore we take only last folder name which is docile split name (defined in /ultralytics/datasets/docile.yaml)
+    if not isinstance(img_path, list):
+        img_path = [img_path]
+    split_names = [ os.path.basename(ip) for ip in img_path ] #  os.path.basename(img_path),
+    dataset_path = [ os.path.dirname(ip) for ip in img_path ][0] # os.path.dirname(img_path),
+    with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
+        dataset = DOCILEDataset(
+            split_names=split_names,
+            dataset_path=dataset_path,
+            imgsz=cfg.imgsz,
+            batch_size=batch,
+            augment=mode == 'train',  # augmentation
+            hyp=cfg,  # TODO: probably add a get_hyps_from_cfg function
+            rect=cfg.rect or rect,  # rectangular batches
+            cache=cfg.cache or None,
+            single_cls=cfg.single_cls or False,
+            stride=int(stride),
+            pad=0.0 if mode == 'train' else 0.5,
+            prefix=colorstr(f'{mode}: '),
+            use_segments=cfg.task == 'segment',
+            use_keypoints=cfg.task == 'pose',
+            classes=cfg.classes,
+            data=data_info)
+
+    batch = min(batch, len(dataset))
+    nd = torch.cuda.device_count()  # number of CUDA devices
+    workers = cfg.workers if mode == 'train' else cfg.workers * 2
+    nw = min([os.cpu_count() // max(nd, 1), batch if batch > 1 else 0, workers])  # number of workers
+    sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
+    loader = DataLoader if cfg.image_weights or cfg.close_mosaic else InfiniteDataLoader  # allow attribute updates
+    generator = torch.Generator()
+    generator.manual_seed(6148914691236517205 + RANK)
+    return loader(
+        dataset=dataset,
+        batch_size=batch,
+        shuffle=shuffle and sampler is None,
+        num_workers=nw,
+        sampler=sampler,
+        pin_memory=PIN_MEMORY,
+        collate_fn=getattr(dataset, 'collate_fn', None),
+        worker_init_fn=seed_worker,
+        persistent_workers=(nw > 0) and (loader == DataLoader),  # persist workers if using default PyTorch DataLoader
+        generator=generator), dataset
 
 
 def build_dataloader(cfg, batch, img_path, data_info, stride=32, rect=False, rank=-1, mode='train'):

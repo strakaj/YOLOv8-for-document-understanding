@@ -1,13 +1,16 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
 from ultralytics.yolo.utils.torch_utils import get_flops, get_num_params
+import os
 
-try:
-    import wandb as wb
-
-    assert hasattr(wb, '__version__')
-except (ImportError, AssertionError):
+if os.getenv("WANDB_API_KEY") is None:
     wb = None
+else:
+    try:
+        import wandb as wb
+        assert hasattr(wb, '__version__')
+    except (ImportError, AssertionError):
+        wb = None
 
 
 def on_pretrain_routine_start(trainer):
@@ -39,10 +42,13 @@ def on_train_epoch_end(trainer):
 
 def on_train_end(trainer):
     """Save the best model as an artifact at end of training."""
+    """
     art = wb.Artifact(type='model', name=f'run_{wb.run.id}_model')
     if trainer.best.exists():
         art.add_file(trainer.best)
         wb.run.log_artifact(art)
+    """
+    pass
 
 
 callbacks = {

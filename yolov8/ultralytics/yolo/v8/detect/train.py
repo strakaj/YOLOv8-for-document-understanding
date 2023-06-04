@@ -7,7 +7,7 @@ import torch.nn as nn
 
 from ultralytics.nn.tasks import DetectionModel
 from ultralytics.yolo import v8
-from ultralytics.yolo.data import build_dataloader
+from ultralytics.yolo.data import build_dataloader, build_dataloader_docile
 from ultralytics.yolo.data.dataloaders.v5loader import create_dataloader
 from ultralytics.yolo.engine.trainer import BaseTrainer
 from ultralytics.yolo.utils import DEFAULT_CFG, RANK, colorstr
@@ -25,23 +25,31 @@ class DetectionTrainer(BaseTrainer):
         """TODO: manage splits differently."""
         # Calculate stride - check if model is initialized
         gs = max(int(de_parallel(self.model).stride.max() if self.model else 0), 32)
-        return create_dataloader(path=dataset_path,
-                                 imgsz=self.args.imgsz,
-                                 batch_size=batch_size,
-                                 stride=gs,
-                                 hyp=vars(self.args),
-                                 augment=mode == 'train',
-                                 cache=self.args.cache,
-                                 pad=0 if mode == 'train' else 0.5,
-                                 rect=self.args.rect or mode == 'val',
-                                 rank=rank,
-                                 workers=self.args.workers,
-                                 close_mosaic=self.args.close_mosaic != 0,
-                                 prefix=colorstr(f'{mode}: '),
-                                 shuffle=mode == 'train',
-                                 seed=self.args.seed)[0] if self.args.v5loader else \
-            build_dataloader(self.args, batch_size, img_path=dataset_path, stride=gs, rank=rank, mode=mode,
-                             rect=mode == 'val', data_info=self.data)[0]
+        if self.args.v5loader:
+            data_loader = create_dataloader(path=dataset_path,
+                                            imgsz=self.args.imgsz,
+                                            batch_size=batch_size,
+                                            stride=gs,
+                                            hyp=vars(self.args),
+                                            augment=mode == 'train',
+                                            cache=self.args.cache,
+                                            pad=0 if mode == 'train' else 0.5,
+                                            rect=self.args.rect or mode == 'val',
+                                            rank=rank,
+                                            workers=self.args.workers,
+                                            close_mosaic=self.args.close_mosaic != 0,
+                                            prefix=colorstr(f'{mode}: '),
+                                            shuffle=mode == 'train',
+                                            seed=self.args.seed)[0]
+        else:
+            if self.args.docile_data_loader:
+                data_loader = build_dataloader_docile(self.args, batch_size, img_path=dataset_path, stride=gs, rank=rank, mode=mode,
+                                        rect=mode == 'val', data_info=self.data)[0]
+            else:
+                data_loader = build_dataloader(self.args, batch_size, img_path=dataset_path, stride=gs, rank=rank, mode=mode,
+                                 rect=mode == 'val', data_info=self.data)[0]
+
+        return data_loader
 
     def preprocess_batch(self, batch):
         """Preprocesses a batch of images by scaling and converting to float."""

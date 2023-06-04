@@ -81,7 +81,7 @@ class BaseDataset(Dataset):
 
         # Cache stuff
         self.ims = [None] * self.ni
-        self.npy_files = [Path(f).with_suffix('.npy') for f in self.im_files]
+        self.npy_files = None #[Path(f).with_suffix('.npy') for f in self.im_files]
         if cache:
             self.cache_images(cache)
 
