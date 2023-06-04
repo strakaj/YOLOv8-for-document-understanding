@@ -134,8 +134,11 @@ class BaseValidator:
                 self.args.rect = False
             self.dataloader = self.dataloader or self.get_dataloader(self.data.get(self.args.split), self.args.batch)
 
+            ch = 3
+            if "ch" in model.model.yaml and not model.model.yaml["ch"] is None:
+                ch = model.model.yaml["ch"]
             model.eval()
-            model.warmup(imgsz=(1 if pt else self.args.batch, 3, imgsz, imgsz))  # warmup
+            model.warmup(imgsz=(1 if pt else self.args.batch, ch, imgsz, imgsz))  # warmup
 
         dt = Profile(), Profile(), Profile(), Profile()
         n_batches = len(self.dataloader)
