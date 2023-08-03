@@ -135,8 +135,8 @@ def group_fields_full(fields, line_item_fields, box_height_overlap=0.1):
 def get_args_parser():
     parser = argparse.ArgumentParser('', add_help=False)
 
-    parser.add_argument('--run_path', default="/home/strakajk/MLProjects/DocILE-2023/official_code2/YOLOv8-for-document-understanding/yolov8/docile_yolov8/dbg12", type=str)
-    parser.add_argument('--dataset_path', default="/media/strakajk/Data/Datasets/DocILE/docile", type=str)
+    parser.add_argument('--run_path', default="", type=str)
+    parser.add_argument('--dataset_path', default="", type=str)
     parser.add_argument('--split', default="val", type=str)
 
     parser.add_argument('--grouping_method', default="vertical", type=str, help="Grouping method of line items. "

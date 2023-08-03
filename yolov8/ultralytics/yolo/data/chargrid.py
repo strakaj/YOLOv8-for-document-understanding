@@ -74,3 +74,33 @@ def get_char_grid(fields, shape, encodings):
                 enc = encodings[c]
             char_grid[y0:y1, x_start_idx[i]:x_end_idx[i]] = enc
     return char_grid
+
+def get_char_grid_easy(ocr, shape, encodings):
+    if list(encodings.keys())[0] == "":
+        char_grid = np.zeros([*shape, 3])
+    else:
+        char_grid = np.ones([*shape, 3])
+
+    if isinstance(list(encodings.values())[0], float):
+        char_grid = np.zeros([*shape, 1])
+
+    for o in ocr:
+        text = o[1]
+        if not text.strip():
+            continue
+        x0, y0, x1, y1 = o[0]
+        num_chars = len(text)
+        w = x1 - x0
+        step = w / num_chars
+
+        x_start_idx = np.floor(np.arange(num_chars) * step + x0).astype(int)
+        x_end_idx = np.ceil((np.arange(num_chars) + 1) * step + x0).astype(int)
+
+        for i, c in enumerate(text):
+            if c not in encodings:
+                print(f"{c} not in encodings")
+                enc = encodings[""]
+            else:
+                enc = encodings[c]
+            char_grid[y0:y1, x_start_idx[i]:x_end_idx[i]] = enc
+    return char_grid

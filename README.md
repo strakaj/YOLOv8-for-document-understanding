@@ -57,3 +57,14 @@ python yolov8/predict.py \
     --run_path <path/to/yolov8/output/folder> \
     --dataset_path <path/to/docile/dataset>
 ```
+
+### Predict on separate images
+```bash
+pip install easyocr
+```
+```bash
+python yolov8/predict_image.py \
+    --checkpoint_path <path/to/checkpoint.pt> \
+    --output_path <path/to/output/folder> \
+    --data_path <path/to/folder/with/images>
+```
